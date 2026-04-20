@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Binaural Beats</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;600&family=Noto+Sans+JP:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #070b12;
+    --surface: #0d1420;
+    --border: #1a2540;
+    --accent: #00d4ff;
+    --accent2: #7b5ea7;
+    --text: #c8d8e8;
+    --text-dim: #4a6070;
+    --glow: rgba(0, 212, 255, 0.15);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans JP', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    overflow-x: hidden;
+  }
+
+  /* 背景の星っぽいパーティクル */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20% 30%, rgba(0,212,255,0.3) 0%, transparent 100%),
+      radial-gradient(1px 1px at 80% 10%, rgba(123,94,167,0.3) 0%, transparent 100%),
+      radial-gradient(1px 1px at 50% 80%, rgba(0,212,255,0.2) 0%, transparent 100%),
+      radial-gradient(1px 1px at 10% 60%, rgba(123,94,167,0.2) 0%, transparent 100%),
+      radial-gradient(1px 1px at 70% 50%, rgba(0,212,255,0.15) 0%, transparent 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    width: 100%;
+    max-width: 420px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .title-block {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+
+  .title-block h1 {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 2rem;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(0,212,255,0.4);
+  }
+
+  .title-block p {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+    margin-top: 4px;
+  }
+
+  /* 波形ビジュアライザー */
+  .visualizer-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .visualizer-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, var(--glow), transparent 70%);
+    pointer-events: none;
+  }
+
+  canvas {
+    width: 100%;
+    height: 80px;
+    display: block;
+  }
+
+  .freq-display {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 12px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+
+  .freq-display span { color: var(--accent); }
+
+  /* パネル */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  .panel-label {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  .ear-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .ear-tag {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 0.8rem;
+    letter-spacing: 0.1em;
+    width: 48px;
+    color: var(--text-dim);
+  }
+
+  .ear-tag.left { color: #00d4ff; }
+  .ear-tag.right { color: #b07aff; }
+
+  input[type=range] {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type=range].left-ear::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(0,212,255,0.6);
+    cursor: pointer;
+  }
+
+  input[type=range].right-ear::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #b07aff;
+    box-shadow: 0 0 8px rgba(176,122,255,0.6);
+    cursor: pointer;
+  }
+
+  .freq-val {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 1rem;
+    width: 56px;
+    text-align: right;
+  }
+
+  .freq-val.left { color: var(--accent); }
+  .freq-val.right { color: #b07aff; }
+
+  .beat-result {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 6px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  .beat-result-label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  .beat-hz {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .beat-hz span {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+  }
+
+  .wave-type-badge {
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-family: 'Rajdhani', sans-serif;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+  }
+
+  /* ボリューム */
+  .vol-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .vol-row input[type=range] {
+    flex: 1;
+  }
+
+  .vol-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #ffffff88;
+    cursor: pointer;
+  }
+
+  .vol-icon {
+    font-size: 1rem;
+    color: var(--text-dim);
+  }
+
+  /* 再生ボタン */
+  .play-btn {
+    width: 100%;
+    padding: 16px;
+    border: none;
+    border-radius: 12px;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 1.1rem;
+    letter-spacing: 0.2em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .play-btn.off {
+    background: linear-gradient(135deg, #0d3d50, #1a2540);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    box-shadow: 0 0 20px rgba(0,212,255,0.1);
+  }
+
+  .play-btn.on {
+    background: linear-gradient(135deg, #003d50, #001a30);
+    color: #fff;
+    border: 1px solid var(--accent);
+    box-shadow: 0 0 30px rgba(0,212,255,0.3), inset 0 0 20px rgba(0,212,255,0.05);
+    animation: pulse-border 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { box-shadow: 0 0 20px rgba(0,212,255,0.2); }
+    50% { box-shadow: 0 0 40px rgba(0,212,255,0.5); }
+  }
+
+  .play-btn:active { transform: scale(0.98); }
+
+  /* タイマー */
+  .timer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-family: 'Rajdhani', sans-serif;
+  }
+
+  .timer-label { font-size: 0.7rem; color: var(--text-dim); letter-spacing: 0.1em; }
+
+  .timer-val {
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .timer-val.running { color: var(--accent); }
+
+  /* 注意書き */
+  .note {
+    text-align: center;
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    margin-top: 16px;
+    line-height: 1.8;
+  }
+
+  /* プリセット */
+  .presets {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .preset-btn {
+    flex: 1;
+    min-width: 80px;
+    padding: 8px 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    font-family: 'Rajdhani', sans-serif;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  .preset-btn:hover, .preset-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(0,212,255,0.05);
+  }
+
+  .preset-btn strong {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="title-block">
+    <h1>BINAURAL BEATS</h1>
+    <p>BRAINWAVE ENTRAINMENT GENERATOR</p>
+  </div>
+
+  <!-- ビジュアライザー -->
+  <div class="visualizer-wrap">
+    <canvas id="canvas" height="80"></canvas>
+    <div class="freq-display">
+      <div>L: <span id="disp-left">250</span> Hz</div>
+      <div>BEAT: <span id="disp-beat">4</span> Hz</div>
+      <div>R: <span id="disp-right">254</span> Hz</div>
+    </div>
+  </div>
+
+  <!-- プリセット -->
+  <div class="panel">
+    <div class="panel-label">PRESETS</div>
+    <div class="presets">
+      <button class="preset-btn active" onclick="applyPreset(250,254,this)">
+        <strong>θ 4Hz</strong>瞑想・直感
+      </button>
+      <button class="preset-btn" onclick="applyPreset(250,256,this)">
+        <strong>θ 6Hz</strong>深リラックス
+      </button>
+      <button class="preset-btn" onclick="applyPreset(200,210,this)">
+        <strong>α 10Hz</strong>集中・フロー
+      </button>
+      <button class="preset-btn" onclick="applyPreset(300,340,this)">
+        <strong>β 40Hz</strong>覚醒・集中
+      </button>
+    </div>
+  </div>
+
+  <!-- 周波数コントロール -->
+  <div class="panel">
+    <div class="panel-label">FREQUENCY CONTROL</div>
+
+    <div class="ear-row">
+      <span class="ear-tag left">L EAR</span>
+      <input type="range" class="left-ear" id="left-freq" min="80" max="500" value="250" oninput="updateFreqs()">
+      <span class="freq-val left" id="left-val">250 Hz</span>
+    </div>
+
+    <div class="ear-row">
+      <span class="ear-tag right">R EAR</span>
+      <input type="range" class="right-ear" id="right-freq" min="80" max="500" value="254" oninput="updateFreqs()">
+      <span class="freq-val right" id="right-val">254 Hz</span>
+    </div>
+
+    <div class="beat-result">
+      <div>
+        <div class="beat-result-label">BEAT FREQUENCY</div>
+        <div class="beat-hz" id="beat-display">4 <span>Hz</span></div>
+      </div>
+      <div class="wave-type-badge" id="wave-badge" style="background:rgba(0,212,255,0.1);color:#00d4ff;border:1px solid #00d4ff;">
+        THETA
+      </div>
+    </div>
+  </div>
+
+  <!-- ボリューム -->
+  <div class="panel">
+    <div class="panel-label">VOLUME</div>
+    <div class="vol-row">
+      <span class="vol-icon">🔈</span>
+      <input type="range" id="volume" min="0" max="100" value="40" oninput="updateVolume()">
+      <span class="vol-icon">🔊</span>
+    </div>
+  </div>
+
+  <!-- 再生ボタン -->
+  <button class="play-btn off" id="play-btn" onclick="togglePlay()">
+    ▶ START
+  </button>
+
+  <!-- タイマー -->
+  <div class="timer-row">
+    <span class="timer-label">ELAPSED TIME</span>
+    <span class="timer-val" id="timer">00:00</span>
+  </div>
+
+  <p class="note">
+    🎧 必ずステレオヘッドフォンを使用してください<br>
+    バイノーラルビートはヘッドフォンなしでは機能しません
+  </p>
+
+</div>
+
+<script>
+let audioCtx = null;
+let leftOsc = null, rightOsc = null;
+let gainNode = null;
+let isPlaying = false;
+let timerInterval = null;
+let elapsed = 0;
+let animFrame = null;
+
+const canvas = document.getElementById('canvas');
+const ctx2d = canvas.getContext('2d');
+
+function getLeftFreq() { return parseInt(document.getElementById('left-freq').value); }
+function getRightFreq() { return parseInt(document.getElementById('right-freq').value); }
+
+function updateFreqs() {
+  const l = getLeftFreq();
+  const r = getRightFreq();
+  const beat = Math.abs(r - l);
+
+  document.getElementById('left-val').textContent = l + ' Hz';
+  document.getElementById('right-val').textContent = r + ' Hz';
+  document.getElementById('beat-display').innerHTML = beat + ' <span>Hz</span>';
+  document.getElementById('disp-left').textContent = l;
+  document.getElementById('disp-right').textContent = r;
+  document.getElementById('disp-beat').textContent = beat;
+
+  // 波形タイプ判定
+  const badge = document.getElementById('wave-badge');
+  let label, color;
+  if (beat < 4) { label = 'DELTA'; color = '#6080ff'; }
+  else if (beat < 8) { label = 'THETA'; color = '#00d4ff'; }
+  else if (beat < 14) { label = 'ALPHA'; color = '#00ff9d'; }
+  else if (beat < 30) { label = 'BETA'; color = '#ffcc00'; }
+  else { label = 'GAMMA'; color = '#ff6060'; }
+  badge.textContent = label;
+  badge.style.color = color;
+  badge.style.borderColor = color;
+  badge.style.background = color + '18';
+
+  // 再生中なら周波数を即時更新
+  if (isPlaying && leftOsc && rightOsc) {
+    leftOsc.frequency.setTargetAtTime(l, audioCtx.currentTime, 0.05);
+    rightOsc.frequency.setTargetAtTime(r, audioCtx.currentTime, 0.05);
+  }
+}
+
+function updateVolume() {
+  const vol = document.getElementById('volume').value / 100;
+  if (gainNode) gainNode.gain.setTargetAtTime(vol * 0.4, audioCtx.currentTime, 0.05);
+}
+
+function applyPreset(l, r, btn) {
+  document.getElementById('left-freq').value = l;
+  document.getElementById('right-freq').value = r;
+  updateFreqs();
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function togglePlay() {
+  if (isPlaying) {
+    stopAudio();
+  } else {
+    startAudio();
+  }
+}
+
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const merger = audioCtx.createChannelMerger(2);
+  gainNode = audioCtx.createGain();
+  const vol = document.getElementById('volume').value / 100;
+  gainNode.gain.value = vol * 0.4;
+
+  // 左耳オシレーター
+  leftOsc = audioCtx.createOscillator();
+  const leftGain = audioCtx.createGain();
+  leftGain.gain.value = 1;
+  leftOsc.frequency.value = getLeftFreq();
+  leftOsc.type = 'sine';
+  leftOsc.connect(leftGain);
+  leftGain.connect(merger, 0, 0);
+
+  // 右耳オシレーター
+  rightOsc = audioCtx.createOscillator();
+  const rightGain = audioCtx.createGain();
+  rightGain.gain.value = 1;
+  rightOsc.frequency.value = getRightFreq();
+  rightOsc.type = 'sine';
+  rightOsc.connect(rightGain);
+  rightGain.connect(merger, 0, 1);
+
+  merger.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  leftOsc.start();
+  rightOsc.start();
+
+  isPlaying = true;
+  const btn = document.getElementById('play-btn');
+  btn.textContent = '⏹ STOP';
+  btn.className = 'play-btn on';
+
+  // タイマー
+  elapsed = 0;
+  timerInterval = setInterval(() => {
+    elapsed++;
+    const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const s = String(elapsed % 60).padStart(2, '0');
+    const timerEl = document.getElementById('timer');
+    timerEl.textContent = m + ':' + s;
+    timerEl.className = 'timer-val running';
+  }, 1000);
+
+  drawWave();
+}
+
+function stopAudio() {
+  if (leftOsc) { leftOsc.stop(); leftOsc = null; }
+  if (rightOsc) { rightOsc.stop(); rightOsc = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  gainNode = null;
+  isPlaying = false;
+
+  const btn = document.getElementById('play-btn');
+  btn.textContent = '▶ START';
+  btn.className = 'play-btn off';
+
+  clearInterval(timerInterval);
+  document.getElementById('timer').className = 'timer-val';
+
+  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+  clearCanvas();
+}
+
+function clearCanvas() {
+  canvas.width = canvas.offsetWidth;
+  ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+let phase = 0;
+function drawWave() {
+  canvas.width = canvas.offsetWidth;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx2d.clearRect(0, 0, w, h);
+
+  const beat = Math.abs(getRightFreq() - getLeftFreq());
+  const l = getLeftFreq();
+  const r = getRightFreq();
+
+  // 合成波（簡易的に視覚化）
+  ctx2d.beginPath();
+  ctx2d.strokeStyle = '#00d4ff';
+  ctx2d.lineWidth = 1.5;
+  ctx2d.shadowColor = '#00d4ff';
+  ctx2d.shadowBlur = 6;
+
+  for (let x = 0; x < w; x++) {
+    const t = (x / w) * Math.PI * 2 * 4 + phase;
+    const amp = (Math.sin(t * (beat / 10)) * 0.5 + 0.5);
+    const y = h / 2 + Math.sin(t * (l / 50)) * amp * (h / 2 - 8);
+    if (x === 0) ctx2d.moveTo(x, y);
+    else ctx2d.lineTo(x, y);
+  }
+  ctx2d.stroke();
+
+  // 右耳の波（薄く）
+  ctx2d.beginPath();
+  ctx2d.strokeStyle = 'rgba(176,122,255,0.4)';
+  ctx2d.lineWidth = 1;
+  ctx2d.shadowColor = '#b07aff';
+  ctx2d.shadowBlur = 4;
+
+  for (let x = 0; x < w; x++) {
+    const t = (x / w) * Math.PI * 2 * 4 + phase * 1.02;
+    const amp = (Math.sin(t * (beat / 10) + 0.3) * 0.5 + 0.5);
+    const y = h / 2 + Math.sin(t * (r / 50)) * amp * (h / 2 - 10);
+    if (x === 0) ctx2d.moveTo(x, y);
+    else ctx2d.lineTo(x, y);
+  }
+  ctx2d.stroke();
+
+  phase += 0.04;
+  animFrame = requestAnimationFrame(drawWave);
+}
+
+// 初期化
+updateFreqs();
+</script>
+</body>
+</html>
