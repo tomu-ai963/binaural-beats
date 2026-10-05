@@ -603,13 +603,19 @@ function togglePlay() {
   }
 }
 
+// START/STOP 時のフェード時間（秒）。急な振幅変化によるクリック音を防ぐ
+const FADE = 0.05;
+
 function startAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  // 'playback' は低遅延より安定性優先の大きめバッファ。画面オフ・Bluetooth 時の音飛び対策
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
 
   const merger = audioCtx.createChannelMerger(2);
   gainNode = audioCtx.createGain();
   const vol = document.getElementById('volume').value / 100;
-  gainNode.gain.value = vol * 0.4;
+  const t0 = audioCtx.currentTime;
+  gainNode.gain.setValueAtTime(0, t0);
+  gainNode.gain.linearRampToValueAtTime(vol * 0.4, t0 + FADE);
 
   // 左耳オシレーター
   leftOsc = audioCtx.createOscillator();
@@ -655,11 +661,20 @@ function startAudio() {
 }
 
 function stopAudio() {
-  if (leftOsc) { leftOsc.stop(); leftOsc = null; }
-  if (rightOsc) { rightOsc.stop(); rightOsc = null; }
-  if (audioCtx) { audioCtx.close(); audioCtx = null; }
-  gainNode = null;
+  // フェードアウト後に停止する。参照は先に切り離すので、フェード中の再 START は新しい context で始まる
+  const ctx = audioCtx, l = leftOsc, r = rightOsc, g = gainNode;
+  audioCtx = null; leftOsc = null; rightOsc = null; gainNode = null;
   isPlaying = false;
+
+  if (ctx) {
+    const t = ctx.currentTime;
+    g.gain.cancelScheduledValues(t);
+    g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.linearRampToValueAtTime(0, t + FADE);
+    l.stop(t + FADE);
+    r.stop(t + FADE);
+    setTimeout(() => ctx.close(), FADE * 1000 + 50);
+  }
 
   const btn = document.getElementById('play-btn');
   btn.textContent = '▶ START';
