@@ -191,12 +191,44 @@
     font-family: 'Rajdhani', sans-serif;
     font-weight: 600;
     font-size: 1rem;
-    width: 56px;
-    text-align: right;
+    width: 84px;
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 3px;
   }
 
   .freq-val.left { color: var(--accent); }
   .freq-val.right { color: #b07aff; }
+
+  /* 周波数の数値入力欄 */
+  .num-input {
+    width: 100%;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: inherit;
+    font: inherit;
+    text-align: right;
+    padding: 1px 2px;
+    outline: none;
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .num-input::-webkit-outer-spin-button,
+  .num-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .num-input:focus { border-bottom-color: currentColor; }
+
+  .freq-unit {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
 
   .beat-result {
     display: flex;
@@ -223,6 +255,11 @@
   .beat-hz span {
     font-size: 0.9rem;
     color: var(--text-dim);
+  }
+
+  .beat-hz .num-input {
+    width: 88px;
+    text-align: left;
   }
 
   .wave-type-badge {
@@ -409,20 +446,29 @@
 
     <div class="ear-row">
       <span class="ear-tag left">L EAR</span>
-      <input type="range" class="left-ear" id="left-freq" min="80" max="500" value="250" oninput="updateFreqs()">
-      <span class="freq-val left" id="left-val">250 Hz</span>
+      <input type="range" class="left-ear" id="left-freq" min="80" max="500" value="250" oninput="setFreqs(+this.value, rightHz)">
+      <span class="freq-val left">
+        <input type="number" class="num-input" id="left-val" data-kind="left" inputmode="decimal" min="80" max="500" step="any" value="250" aria-label="L EAR 周波数 (Hz)">
+        <span class="freq-unit">Hz</span>
+      </span>
     </div>
 
     <div class="ear-row">
       <span class="ear-tag right">R EAR</span>
-      <input type="range" class="right-ear" id="right-freq" min="80" max="500" value="254" oninput="updateFreqs()">
-      <span class="freq-val right" id="right-val">254 Hz</span>
+      <input type="range" class="right-ear" id="right-freq" min="80" max="500" value="254" oninput="setFreqs(leftHz, +this.value)">
+      <span class="freq-val right">
+        <input type="number" class="num-input" id="right-val" data-kind="right" inputmode="decimal" min="80" max="500" step="any" value="254" aria-label="R EAR 周波数 (Hz)">
+        <span class="freq-unit">Hz</span>
+      </span>
     </div>
 
     <div class="beat-result">
       <div>
         <div class="beat-result-label">BEAT FREQUENCY</div>
-        <div class="beat-hz" id="beat-display">4 <span>Hz</span></div>
+        <div class="beat-hz">
+          <input type="number" class="num-input" id="beat-val" data-kind="beat" inputmode="decimal" min="0" step="any" value="4" aria-label="ビート周波数 (Hz)">
+          <span>Hz</span>
+        </div>
       </div>
       <div class="wave-type-badge" id="wave-badge" style="background:rgba(0,212,255,0.1);color:#00d4ff;border:1px solid #00d4ff;">
         THETA
@@ -470,17 +516,50 @@ let animFrame = null;
 const canvas = document.getElementById('canvas');
 const ctx2d = canvas.getContext('2d');
 
-function getLeftFreq() { return parseInt(document.getElementById('left-freq').value); }
-function getRightFreq() { return parseInt(document.getElementById('right-freq').value); }
+// 周波数の正はスライダーではなくこの2変数（スライダーは整数stepなので小数を保持できない）
+const FREQ_MIN = 80, FREQ_MAX = 500;
+let leftHz = 250, rightHz = 254;
+
+const round2 = (x) => Math.round(x * 100) / 100;
+const clamp = (x, min, max) => Math.min(max, Math.max(min, x));
+
+function getLeftFreq() { return leftHz; }
+function getRightFreq() { return rightHz; }
+
+function setFreqs(l, r) {
+  leftHz = round2(clamp(l, FREQ_MIN, FREQ_MAX));
+  rightHz = round2(clamp(r, FREQ_MIN, FREQ_MAX));
+  updateFreqs();
+}
+
+// 入力欄の確定（blur / Enter）。範囲外はクランプ、不正値は直前値に戻す
+function commitInput(el) {
+  const v = parseFloat(el.value);
+  if (el.value.trim() === '' || !Number.isFinite(v)) { updateFreqs(); return; }
+  if (el.dataset.kind === 'left') setFreqs(v, rightHz);
+  else if (el.dataset.kind === 'right') setFreqs(leftHz, v);
+  else setFreqs(leftHz, leftHz + clamp(v, 0, FREQ_MAX - leftHz));
+}
+
+document.querySelectorAll('.num-input').forEach((el) => {
+  el.addEventListener('blur', () => commitInput(el));
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { commitInput(el); el.blur(); }
+    else if (e.key === 'Escape') { updateFreqs(); el.blur(); }
+  });
+});
 
 function updateFreqs() {
-  const l = getLeftFreq();
-  const r = getRightFreq();
-  const beat = Math.abs(r - l);
+  const l = leftHz;
+  const r = rightHz;
+  const beat = round2(Math.abs(r - l));
 
-  document.getElementById('left-val').textContent = l + ' Hz';
-  document.getElementById('right-val').textContent = r + ' Hz';
-  document.getElementById('beat-display').innerHTML = beat + ' <span>Hz</span>';
+  document.getElementById('left-freq').value = l;
+  document.getElementById('right-freq').value = r;
+  document.getElementById('left-val').value = l;
+  document.getElementById('right-val').value = r;
+  document.getElementById('beat-val').value = beat;
+  document.getElementById('beat-val').max = round2(FREQ_MAX - l);
   document.getElementById('disp-left').textContent = l;
   document.getElementById('disp-right').textContent = r;
   document.getElementById('disp-beat').textContent = beat;
@@ -511,9 +590,7 @@ function updateVolume() {
 }
 
 function applyPreset(l, r, btn) {
-  document.getElementById('left-freq').value = l;
-  document.getElementById('right-freq').value = r;
-  updateFreqs();
+  setFreqs(l, r);
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
 }
