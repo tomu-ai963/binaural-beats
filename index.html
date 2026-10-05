@@ -504,7 +504,11 @@
 
 </div>
 
+<!-- Web Audio の出力をメディア要素経由で鳴らす（画面オフ時も OS にメディア再生として扱わせる） -->
+<audio id="player"></audio>
+
 <script>
+const audio = document.getElementById('player');
 let audioCtx = null;
 let leftOsc = null, rightOsc = null;
 let gainNode = null;
@@ -577,6 +581,8 @@ function updateFreqs() {
   badge.style.borderColor = color;
   badge.style.background = color + '18';
 
+  updateMediaMetadata();
+
   // 再生中なら周波数を即時更新
   if (isPlaying && leftOsc && rightOsc) {
     leftOsc.frequency.setTargetAtTime(l, audioCtx.currentTime, 0.05);
@@ -635,13 +641,19 @@ function startAudio() {
   rightOsc.connect(rightGain);
   rightGain.connect(merger, 0, 1);
 
+  // destination ではなく MediaStream に流し、<audio> で再生する
+  const streamDest = audioCtx.createMediaStreamDestination();
   merger.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+  gainNode.connect(streamDest);
 
   leftOsc.start();
   rightOsc.start();
 
+  audio.srcObject = streamDest.stream;
+  audio.play().catch((e) => { if (e.name !== 'AbortError' && isPlaying) stopAudio(); });
+
   isPlaying = true;
+  setPlaybackState('playing');
   const btn = document.getElementById('play-btn');
   btn.textContent = '⏹ STOP';
   btn.className = 'play-btn on';
@@ -665,6 +677,7 @@ function stopAudio() {
   const ctx = audioCtx, l = leftOsc, r = rightOsc, g = gainNode;
   audioCtx = null; leftOsc = null; rightOsc = null; gainNode = null;
   isPlaying = false;
+  setPlaybackState('paused');
 
   if (ctx) {
     const t = ctx.currentTime;
@@ -673,7 +686,12 @@ function stopAudio() {
     g.gain.linearRampToValueAtTime(0, t + FADE);
     l.stop(t + FADE);
     r.stop(t + FADE);
-    setTimeout(() => ctx.close(), FADE * 1000 + 50);
+    const stream = audio.srcObject;
+    setTimeout(() => {
+      // フェード中に再 START されていたら <audio> は新しいストリームを再生中なので触らない
+      if (audio.srcObject === stream) { audio.pause(); audio.srcObject = null; }
+      ctx.close();
+    }, FADE * 1000 + 50);
   }
 
   const btn = document.getElementById('play-btn');
@@ -686,6 +704,34 @@ function stopAudio() {
   if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
   clearCanvas();
 }
+
+// ---- Media Session（ロック画面・通知からの操作）----
+function updateMediaMetadata() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: 'Binaural Beats',
+    artist: `L ${leftHz} Hz / R ${rightHz} Hz · BEAT ${round2(Math.abs(rightHz - leftHz))} Hz`,
+    artwork: [
+      { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  });
+}
+
+function setPlaybackState(state) {
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = state;
+}
+
+if ('mediaSession' in navigator) {
+  navigator.mediaSession.setActionHandler('play', () => { if (!isPlaying) startAudio(); });
+  navigator.mediaSession.setActionHandler('pause', () => { if (isPlaying) stopAudio(); });
+  navigator.mediaSession.setActionHandler('stop', () => { if (isPlaying) stopAudio(); });
+}
+
+// OS 側の都合（イヤホン抜け・他アプリ再生など）で <audio> が止まったら UI を合わせる。
+// 自前の pause は isPlaying=false にした後なので何もしない。srcObject 差し替えに伴う
+// pause イベントは直後の play() で paused=false に戻っているので audio.paused で除外する
+audio.addEventListener('pause', () => { if (isPlaying && audio.paused) stopAudio(); });
 
 function clearCanvas() {
   canvas.width = canvas.offsetWidth;
