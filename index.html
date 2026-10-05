@@ -446,7 +446,7 @@
 
     <div class="ear-row">
       <span class="ear-tag left">L EAR</span>
-      <input type="range" class="left-ear" id="left-freq" min="80" max="500" value="250" oninput="setFreqs(+this.value, rightHz)">
+      <input type="range" class="left-ear" id="left-freq" min="80" max="500" value="250" oninput="setFreqs(+this.value, rightHz, false)" onchange="applyAudio()">
       <span class="freq-val left">
         <input type="number" class="num-input" id="left-val" data-kind="left" inputmode="decimal" min="80" max="500" step="any" value="250" aria-label="L EAR 周波数 (Hz)">
         <span class="freq-unit">Hz</span>
@@ -455,7 +455,7 @@
 
     <div class="ear-row">
       <span class="ear-tag right">R EAR</span>
-      <input type="range" class="right-ear" id="right-freq" min="80" max="500" value="254" oninput="setFreqs(leftHz, +this.value)">
+      <input type="range" class="right-ear" id="right-freq" min="80" max="500" value="254" oninput="setFreqs(leftHz, +this.value, false)" onchange="applyAudio()">
       <span class="freq-val right">
         <input type="number" class="num-input" id="right-val" data-kind="right" inputmode="decimal" min="80" max="500" step="any" value="254" aria-label="R EAR 周波数 (Hz)">
         <span class="freq-unit">Hz</span>
@@ -504,10 +504,10 @@
 
 </div>
 
+<audio id="player" loop preload="auto"></audio>
+
 <script>
-let audioCtx = null;
-let leftOsc = null, rightOsc = null;
-let gainNode = null;
+const audio = document.getElementById('player');
 let isPlaying = false;
 let timerInterval = null;
 let elapsed = 0;
@@ -526,10 +526,12 @@ const clamp = (x, min, max) => Math.min(max, Math.max(min, x));
 function getLeftFreq() { return leftHz; }
 function getRightFreq() { return rightHz; }
 
-function setFreqs(l, r) {
+// apply=false はスライダーのドラッグ中（表示だけ更新し、WAV 再生成は change で確定時に行う）
+function setFreqs(l, r, apply = true) {
   leftHz = round2(clamp(l, FREQ_MIN, FREQ_MAX));
   rightHz = round2(clamp(r, FREQ_MIN, FREQ_MAX));
   updateFreqs();
+  if (apply) applyAudio();
 }
 
 // 入力欄の確定（blur / Enter）。範囲外はクランプ、不正値は直前値に戻す
@@ -576,18 +578,113 @@ function updateFreqs() {
   badge.style.color = color;
   badge.style.borderColor = color;
   badge.style.background = color + '18';
+}
 
-  // 再生中なら周波数を即時更新
-  if (isPlaying && leftOsc && rightOsc) {
-    leftOsc.frequency.setTargetAtTime(l, audioCtx.currentTime, 0.05);
-    rightOsc.frequency.setTargetAtTime(r, audioCtx.currentTime, 0.05);
+// ---- WAV 生成 ----
+// 画面オフ時も OS のメディア再生として扱われるよう、Web Audio ではなく <audio loop> で鳴らす
+const SAMPLE_RATE = 22050; // 周波数上限 500Hz に対して十分
+const AMP = 0.4;           // 旧実装の gain 上限（音量100%で 0.4）と同じ音圧
+
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+
+// L×n と R×n がともに整数になる最小の n 秒（= 両チャンネルが整数周期で終わりループが繋がる長さ）。
+// 周波数は 0.01Hz 単位なので n は 100 の約数になり、上限 100 秒に収まる
+function loopSeconds(l, r) {
+  const den = (f) => 100 / gcd(Math.round(f * 100), 100);
+  const a = den(l), b = den(r);
+  return Math.min(100, (a * b) / gcd(a, b));
+}
+
+function buildWav(l, r) {
+  const frames = loopSeconds(l, r) * SAMPLE_RATE;
+  const dataBytes = frames * 4; // 2ch × 16bit
+  const buf = new ArrayBuffer(44 + dataBytes);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + dataBytes, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+  v.setUint32(24, SAMPLE_RATE, true); v.setUint32(28, SAMPLE_RATE * 4, true);
+  v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, dataBytes, true);
+
+  // 位相は整数演算で求める（f×i/sr を浮動小数で累積すると長尺で誤差が出て周期が閉じない）
+  const L100 = Math.round(l * 100), R100 = Math.round(r * 100), P = 100 * SAMPLE_RATE;
+  const k = (2 * Math.PI) / P, A = AMP * 32767;
+  for (let i = 0, o = 44; i < frames; i++, o += 4) {
+    v.setInt16(o, Math.round(A * Math.sin(k * ((L100 * i) % P))), true);
+    v.setInt16(o + 2, Math.round(A * Math.sin(k * ((R100 * i) % P))), true);
   }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+let wavKey = null, wavUrl = null;
+
+function loadWav() {
+  const key = leftHz + '/' + rightHz;
+  if (key === wavKey) return;
+  const old = wavUrl;
+  wavUrl = URL.createObjectURL(buildWav(leftHz, rightHz));
+  wavKey = key;
+  audio.src = wavUrl;
+  if (old) URL.revokeObjectURL(old);
+  updateMediaSession();
+}
+
+// ---- 音量・フェード ----
+const FADE_MS = 50;
+let fadeTimer = null;
+
+const targetVolume = () => document.getElementById('volume').value / 100;
+
+// to は数値か関数（フェード中の音量スライダー変更を反映するため毎回評価）。
+// 経過時間から進捗を出すので、バックグラウンドでタイマーが間引かれても長引かない
+function fadeVolume(to, done) {
+  clearInterval(fadeTimer);
+  const from = audio.volume, t0 = performance.now();
+  fadeTimer = setInterval(() => {
+    const p = Math.min(1, (performance.now() - t0) / FADE_MS);
+    const end = typeof to === 'function' ? to() : to;
+    audio.volume = from + (end - from) * p;
+    if (p === 1) { clearInterval(fadeTimer); fadeTimer = null; if (done) done(); }
+  }, 10);
 }
 
 function updateVolume() {
-  const vol = document.getElementById('volume').value / 100;
-  if (gainNode) gainNode.gain.setTargetAtTime(vol * 0.4, audioCtx.currentTime, 0.05);
+  if (isPlaying && !fadeTimer) audio.volume = targetVolume();
 }
+
+// 確定した周波数を音に反映。再生中は短くフェードアウト → 差し替え → フェードイン
+function applyAudio() {
+  if (!isPlaying || leftHz + '/' + rightHz === wavKey) return;
+  fadeVolume(0, () => {
+    loadWav();
+    audio.play().catch(() => {});
+    fadeVolume(targetVolume);
+  });
+}
+
+// ---- Media Session（ロック画面・通知からの操作）----
+function updateMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: 'Binaural Beats',
+    artist: `L ${leftHz} Hz / R ${rightHz} Hz · BEAT ${round2(Math.abs(rightHz - leftHz))} Hz`,
+    artwork: [
+      { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  });
+}
+
+if ('mediaSession' in navigator) {
+  navigator.mediaSession.setActionHandler('play', () => { if (!isPlaying) startAudio(); });
+  navigator.mediaSession.setActionHandler('pause', () => { if (isPlaying) stopAudio(); });
+  navigator.mediaSession.setActionHandler('stop', () => { if (isPlaying) stopAudio(); });
+}
+
+// OS 側の都合（イヤホン抜け・他アプリ再生など）で止まったら UI を合わせる。
+// 自前の停止は isPlaying=false にしてから pause するのでここには来ない
+audio.addEventListener('pause', () => { if (isPlaying && !fadeTimer) stopAudio(); });
 
 function applyPreset(l, r, btn) {
   setFreqs(l, r);
@@ -603,45 +700,15 @@ function togglePlay() {
   }
 }
 
-// START/STOP 時のフェード時間（秒）。急な振幅変化によるクリック音を防ぐ
-const FADE = 0.05;
-
 function startAudio() {
-  // 'playback' は低遅延より安定性優先の大きめバッファ。画面オフ・Bluetooth 時の音飛び対策
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
-
-  const merger = audioCtx.createChannelMerger(2);
-  gainNode = audioCtx.createGain();
-  const vol = document.getElementById('volume').value / 100;
-  const t0 = audioCtx.currentTime;
-  gainNode.gain.setValueAtTime(0, t0);
-  gainNode.gain.linearRampToValueAtTime(vol * 0.4, t0 + FADE);
-
-  // 左耳オシレーター
-  leftOsc = audioCtx.createOscillator();
-  const leftGain = audioCtx.createGain();
-  leftGain.gain.value = 1;
-  leftOsc.frequency.value = getLeftFreq();
-  leftOsc.type = 'sine';
-  leftOsc.connect(leftGain);
-  leftGain.connect(merger, 0, 0);
-
-  // 右耳オシレーター
-  rightOsc = audioCtx.createOscillator();
-  const rightGain = audioCtx.createGain();
-  rightGain.gain.value = 1;
-  rightOsc.frequency.value = getRightFreq();
-  rightOsc.type = 'sine';
-  rightOsc.connect(rightGain);
-  rightGain.connect(merger, 0, 1);
-
-  merger.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-
-  leftOsc.start();
-  rightOsc.start();
-
+  loadWav();
+  // STOP のフェードアウト中に再 START した場合は、今の音量からそのまま戻す
+  if (audio.paused) audio.volume = 0;
   isPlaying = true;
+  audio.play().catch((e) => { if (e.name !== 'AbortError' && isPlaying) stopAudio(); });
+  fadeVolume(targetVolume);
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+
   const btn = document.getElementById('play-btn');
   btn.textContent = '⏹ STOP';
   btn.className = 'play-btn on';
@@ -661,20 +728,10 @@ function startAudio() {
 }
 
 function stopAudio() {
-  // フェードアウト後に停止する。参照は先に切り離すので、フェード中の再 START は新しい context で始まる
-  const ctx = audioCtx, l = leftOsc, r = rightOsc, g = gainNode;
-  audioCtx = null; leftOsc = null; rightOsc = null; gainNode = null;
+  // UI は即時に戻し、音はフェードアウトしてから pause する
   isPlaying = false;
-
-  if (ctx) {
-    const t = ctx.currentTime;
-    g.gain.cancelScheduledValues(t);
-    g.gain.setValueAtTime(g.gain.value, t);
-    g.gain.linearRampToValueAtTime(0, t + FADE);
-    l.stop(t + FADE);
-    r.stop(t + FADE);
-    setTimeout(() => ctx.close(), FADE * 1000 + 50);
-  }
+  fadeVolume(0, () => audio.pause());
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
 
   const btn = document.getElementById('play-btn');
   btn.textContent = '▶ START';
