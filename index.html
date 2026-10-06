@@ -334,6 +334,53 @@
 
   .play-btn:active { transform: scale(0.98); }
 
+  /* 暗転ボタン */
+  .dim-btn {
+    width: 100%;
+    margin-top: 10px;
+    padding: 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text-dim);
+    font-family: 'Rajdhani', 'Noto Sans JP', sans-serif;
+    font-size: 0.85rem;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .dim-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* 暗転オーバーレイ（タップで解除） */
+  .dim-overlay {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dim-overlay.show { display: flex; }
+
+  .dim-hint {
+    font-size: 0.75rem;
+    color: #333;
+    letter-spacing: 0.15em;
+    opacity: 0;
+  }
+
+  .dim-overlay.show .dim-hint { animation: dim-hint-fade 3s ease-out; }
+
+  @keyframes dim-hint-fade {
+    0%, 40% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
   /* タイマー */
   .timer-row {
     display: flex;
@@ -491,6 +538,8 @@
     ▶ START
   </button>
 
+  <button class="dim-btn" id="dim-btn" onclick="enterDim()">◐ 暗転</button>
+
   <!-- タイマー -->
   <div class="timer-row">
     <span class="timer-label">ELAPSED TIME</span>
@@ -504,6 +553,10 @@
 
 </div>
 
+<div class="dim-overlay" id="dim-overlay" onclick="exitDim()" role="button" aria-label="暗転を解除">
+  <span class="dim-hint">タップで解除</span>
+</div>
+
 <script>
 let audioCtx = null;
 let leftOsc = null, rightOsc = null;
@@ -512,6 +565,8 @@ let isPlaying = false;
 let timerInterval = null;
 let elapsed = 0;
 let animFrame = null;
+let wakeLock = null;
+let isDimmed = false;
 
 const canvas = document.getElementById('canvas');
 const ctx2d = canvas.getContext('2d');
@@ -657,7 +712,8 @@ function startAudio() {
     timerEl.className = 'timer-val running';
   }, 1000);
 
-  drawWave();
+  requestWakeLock();
+  if (!isDimmed) drawWave();
 }
 
 function stopAudio() {
@@ -683,8 +739,49 @@ function stopAudio() {
   clearInterval(timerInterval);
   document.getElementById('timer').className = 'timer-val';
 
+  releaseWakeLock();
+
   if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
   clearCanvas();
+}
+
+// 再生中は画面の自動消灯を防ぐ（Screen Wake Lock API。非対応ブラウザでは何もしない）
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator) || wakeLock || document.visibilityState !== 'visible') return;
+  try {
+    const sentinel = await navigator.wakeLock.request('screen');
+    // 取得待ちの間に STOP された場合は即解除
+    if (!isPlaying) { sentinel.release(); return; }
+    wakeLock = sentinel;
+    sentinel.addEventListener('release', () => { if (wakeLock === sentinel) wakeLock = null; });
+  } catch (e) {
+    // 省電力モード等で拒否されることがある。再生自体は続ける
+  }
+}
+
+function releaseWakeLock() {
+  if (!wakeLock) return;
+  const sentinel = wakeLock;
+  wakeLock = null;
+  sentinel.release().catch(() => {});
+}
+
+// タブが隠れると wake lock は自動解除されるので、復帰時に取り直す
+document.addEventListener('visibilitychange', () => {
+  if (isPlaying && document.visibilityState === 'visible') requestWakeLock();
+});
+
+// 暗転: 全画面を黒で覆い、ビジュアライザーの描画を止める
+function enterDim() {
+  isDimmed = true;
+  document.getElementById('dim-overlay').classList.add('show');
+  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+}
+
+function exitDim() {
+  isDimmed = false;
+  document.getElementById('dim-overlay').classList.remove('show');
+  if (isPlaying && !animFrame) drawWave();
 }
 
 function clearCanvas() {
