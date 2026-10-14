@@ -867,7 +867,7 @@ function exitDim() {
 }
 
 // 暗転の解除は長押し（誤タップで解除されないように）。音声には触れない
-const HOLD_MS = 2000;      // 解除までの長押し時間
+const HOLD_MS = 1500;      // 解除までの長押し時間
 const HOLD_MOVE_PX = 24;   // これ以上指が動いたら長押しを中止
 const dimOverlay = document.getElementById('dim-overlay');
 const ringProgress = document.getElementById('dim-ring-progress');
