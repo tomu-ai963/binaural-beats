@@ -361,24 +361,51 @@
     display: none;
     align-items: center;
     justify-content: center;
+    flex-direction: column;
+    gap: 14px;
     cursor: none;
     -webkit-tap-highlight-color: transparent;
+    /* 長押し中のスクロール・拡大・選択・コンテキストメニューを抑止 */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
 
   .dim-overlay.show { display: flex; }
 
-  .dim-hint {
-    font-size: 0.75rem;
-    color: #333;
-    letter-spacing: 0.15em;
+  /* 長押しの進み具合リング（押している間だけ表示） */
+  .dim-ring {
+    width: 56px;
+    height: 56px;
+    transform: rotate(-90deg);
     opacity: 0;
+    transition: opacity 0.15s;
   }
 
+  .dim-overlay.holding .dim-ring { opacity: 1; }
+
+  .dim-ring circle {
+    fill: none;
+    stroke-width: 2;
+  }
+
+  .dim-ring .track { stroke: #151515; }
+  .dim-ring .progress { stroke: #1d5866; }
+
+  .dim-hint {
+    font-size: 0.75rem;
+    color: #2a2a2a;
+    letter-spacing: 0.15em;
+  }
+
+  /* 表示直後だけ少し明るく、その後は控えめな色で残す */
   .dim-overlay.show .dim-hint { animation: dim-hint-fade 3s ease-out; }
+  .dim-overlay.holding .dim-hint { color: #444; animation: none; }
 
   @keyframes dim-hint-fade {
-    0%, 40% { opacity: 1; }
-    100% { opacity: 0; }
+    0%, 40% { color: #555; }
+    100% { color: #2a2a2a; }
   }
 
   /* タイマー */
@@ -548,8 +575,12 @@
 
 </div>
 
-<div class="dim-overlay" id="dim-overlay" onclick="exitDim()" role="button" aria-label="暗転を解除">
-  <span class="dim-hint">タップで解除</span>
+<div class="dim-overlay" id="dim-overlay" role="button" aria-label="長押しで暗転を解除">
+  <svg class="dim-ring" viewBox="0 0 56 56" aria-hidden="true">
+    <circle class="track" cx="28" cy="28" r="26"></circle>
+    <circle class="progress" id="dim-ring-progress" cx="28" cy="28" r="26"></circle>
+  </svg>
+  <span class="dim-hint">長押しで解除</span>
 </div>
 
 <script>
@@ -592,7 +623,7 @@ function setFreqsManual(l, r) {
   if (setFreqs(l, r)) setActivePreset(null);
 }
 
-// ビート周波数の帯域判定（半開区間）。バッジとプリセット表記の両方がこれを使う
+// ビート周波数の帯域判定（半開区間）。バッジとプリセット表記の両方がこれを使う。0Hz は帯域なし（null）
 const BANDS = [
   { max: 4,        greek: 'δ', label: 'DELTA', color: '#6080ff' },
   { max: 8,        greek: 'θ', label: 'THETA', color: '#00d4ff' },
@@ -601,6 +632,7 @@ const BANDS = [
   { max: Infinity, greek: 'γ', label: 'GAMMA', color: '#ff6060' },
 ];
 function getBand(beat) {
+  if (!(beat > 0)) return null;
   return BANDS.find((b) => beat < b.max);
 }
 
@@ -645,7 +677,9 @@ function updateFreqs() {
 
   // 波形タイプ判定
   const badge = document.getElementById('wave-badge');
-  const { label, color } = getBand(beat);
+  const band = getBand(beat);
+  const label = band ? band.label : '—';
+  const color = band ? band.color : '#4a6070';
   badge.textContent = label;
   badge.style.color = color;
   badge.style.borderColor = color;
@@ -826,10 +860,68 @@ function enterDim() {
 }
 
 function exitDim() {
+  cancelHold();
   isDimmed = false;
   document.getElementById('dim-overlay').classList.remove('show');
   if (isPlaying && !animFrame) drawWave();
 }
+
+// 暗転の解除は長押し（誤タップで解除されないように）。音声には触れない
+const HOLD_MS = 2000;      // 解除までの長押し時間
+const HOLD_MOVE_PX = 24;   // これ以上指が動いたら長押しを中止
+const dimOverlay = document.getElementById('dim-overlay');
+const ringProgress = document.getElementById('dim-ring-progress');
+const RING_LEN = 2 * Math.PI * 26;
+ringProgress.style.strokeDasharray = RING_LEN;
+ringProgress.style.strokeDashoffset = RING_LEN;
+let hold = null; // { id, x, y, start, frame }
+
+function setHoldProgress(p) {
+  ringProgress.style.strokeDashoffset = RING_LEN * (1 - p);
+}
+
+function cancelHold() {
+  if (!hold) return;
+  cancelAnimationFrame(hold.frame);
+  hold = null;
+  dimOverlay.classList.remove('holding');
+  setHoldProgress(0);
+}
+
+function tickHold() {
+  if (!hold) return;
+  const p = Math.min(1, (performance.now() - hold.start) / HOLD_MS);
+  setHoldProgress(p);
+  if (p >= 1) { exitDim(); suppressNextClick(); }
+  else hold.frame = requestAnimationFrame(tickHold);
+}
+
+// 解除直後に指を離したとき、下にある START/STOP 等へ click が届かないようにする
+function suppressNextClick() {
+  const block = (e) => { e.stopPropagation(); e.preventDefault(); };
+  window.addEventListener('click', block, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener('click', block, { capture: true }), 600);
+}
+
+dimOverlay.addEventListener('pointerdown', (e) => {
+  if (hold || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  e.preventDefault();
+  dimOverlay.setPointerCapture(e.pointerId);
+  hold = { id: e.pointerId, x: e.clientX, y: e.clientY, start: performance.now(), frame: 0 };
+  dimOverlay.classList.add('holding');
+  hold.frame = requestAnimationFrame(tickHold);
+});
+
+dimOverlay.addEventListener('pointermove', (e) => {
+  if (!hold || e.pointerId !== hold.id) return;
+  if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > HOLD_MOVE_PX) cancelHold();
+});
+
+['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => {
+  dimOverlay.addEventListener(type, (e) => { if (hold && e.pointerId === hold.id) cancelHold(); });
+});
+
+dimOverlay.addEventListener('contextmenu', (e) => e.preventDefault());
 
 function clearCanvas() {
   canvas.width = canvas.offsetWidth;
