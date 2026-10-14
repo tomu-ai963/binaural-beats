@@ -415,22 +415,21 @@
 
   /* プリセット */
   .presets {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-    flex-wrap: wrap;
   }
 
   .preset-btn {
-    flex: 1;
-    min-width: 80px;
-    padding: 8px 6px;
+    min-width: 0;
+    padding: 8px 2px;
     background: transparent;
     border: 1px solid var(--border);
     border-radius: 8px;
     color: var(--text-dim);
     font-size: 0.7rem;
     font-family: 'Rajdhani', sans-serif;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
     cursor: pointer;
     transition: all 0.2s;
     text-align: center;
@@ -447,6 +446,13 @@
     display: block;
     font-size: 0.85rem;
     font-weight: 600;
+  }
+
+  .low-freq-note {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    line-height: 1.6;
+    margin: -4px 0 10px;
   }
 </style>
 </head>
@@ -471,20 +477,7 @@
   <!-- プリセット -->
   <div class="panel">
     <div class="panel-label">PRESETS</div>
-    <div class="presets">
-      <button class="preset-btn active" onclick="applyPreset(250,254,this)">
-        <strong>θ 4Hz</strong>瞑想・直感
-      </button>
-      <button class="preset-btn" onclick="applyPreset(250,256,this)">
-        <strong>θ 6Hz</strong>深リラックス
-      </button>
-      <button class="preset-btn" onclick="applyPreset(200,210,this)">
-        <strong>α 10Hz</strong>集中・フロー
-      </button>
-      <button class="preset-btn" onclick="applyPreset(300,340,this)">
-        <strong>β 40Hz</strong>覚醒・集中
-      </button>
-    </div>
+    <div class="presets" id="presets"></div>
   </div>
 
   <!-- 周波数コントロール -->
@@ -493,21 +486,23 @@
 
     <div class="ear-row">
       <span class="ear-tag left">L EAR</span>
-      <input type="range" class="left-ear" id="left-freq" min="80" max="500" value="250" oninput="setFreqs(+this.value, rightHz)">
+      <input type="range" class="left-ear" id="left-freq" min="40" max="500" value="250" oninput="setFreqsManual(+this.value, rightHz)">
       <span class="freq-val left">
-        <input type="number" class="num-input" id="left-val" data-kind="left" inputmode="decimal" min="80" max="500" step="any" value="250" aria-label="L EAR 周波数 (Hz)">
+        <input type="number" class="num-input" id="left-val" data-kind="left" inputmode="decimal" min="40" max="500" step="any" value="250" aria-label="L EAR 周波数 (Hz)">
         <span class="freq-unit">Hz</span>
       </span>
     </div>
 
     <div class="ear-row">
       <span class="ear-tag right">R EAR</span>
-      <input type="range" class="right-ear" id="right-freq" min="80" max="500" value="254" oninput="setFreqs(leftHz, +this.value)">
+      <input type="range" class="right-ear" id="right-freq" min="40" max="500" value="254" oninput="setFreqsManual(leftHz, +this.value)">
       <span class="freq-val right">
-        <input type="number" class="num-input" id="right-val" data-kind="right" inputmode="decimal" min="80" max="500" step="any" value="254" aria-label="R EAR 周波数 (Hz)">
+        <input type="number" class="num-input" id="right-val" data-kind="right" inputmode="decimal" min="40" max="500" step="any" value="254" aria-label="R EAR 周波数 (Hz)">
         <span class="freq-unit">Hz</span>
       </span>
     </div>
+
+    <p class="low-freq-note">※ 低音域（約100Hz以下）は、イヤホンや機器によって聞こえにくい場合があります</p>
 
     <div class="beat-result">
       <div>
@@ -572,7 +567,7 @@ const canvas = document.getElementById('canvas');
 const ctx2d = canvas.getContext('2d');
 
 // 周波数の正はスライダーではなくこの2変数（スライダーは整数stepなので小数を保持できない）
-const FREQ_MIN = 80, FREQ_MAX = 500;
+const FREQ_MIN = 40, FREQ_MAX = 500;
 let leftHz = 250, rightHz = 254;
 
 const round2 = (x) => Math.round(x * 100) / 100;
@@ -581,19 +576,48 @@ const clamp = (x, min, max) => Math.min(max, Math.max(min, x));
 function getLeftFreq() { return leftHz; }
 function getRightFreq() { return rightHz; }
 
+// 値が変わったら true を返す
 function setFreqs(l, r) {
-  leftHz = round2(clamp(l, FREQ_MIN, FREQ_MAX));
-  rightHz = round2(clamp(r, FREQ_MIN, FREQ_MAX));
+  const nl = round2(clamp(l, FREQ_MIN, FREQ_MAX));
+  const nr = round2(clamp(r, FREQ_MIN, FREQ_MAX));
+  const changed = nl !== leftHz || nr !== rightHz;
+  leftHz = nl;
+  rightHz = nr;
   updateFreqs();
+  return changed;
+}
+
+// 手動操作（スライダー・数値入力）。値が変わったらプリセットの選択を外す
+function setFreqsManual(l, r) {
+  if (setFreqs(l, r)) setActivePreset(null);
+}
+
+// ビート周波数の帯域判定（半開区間）。バッジとプリセット表記の両方がこれを使う
+const BANDS = [
+  { max: 4,        greek: 'δ', label: 'DELTA', color: '#6080ff' },
+  { max: 8,        greek: 'θ', label: 'THETA', color: '#00d4ff' },
+  { max: 13,       greek: 'α', label: 'ALPHA', color: '#00ff9d' },
+  { max: 30,       greek: 'β', label: 'BETA',  color: '#ffcc00' },
+  { max: Infinity, greek: 'γ', label: 'GAMMA', color: '#ff6060' },
+];
+function getBand(beat) {
+  return BANDS.find((b) => beat < b.max);
 }
 
 // 入力欄の確定（blur / Enter）。範囲外はクランプ、不正値は直前値に戻す
 function commitInput(el) {
   const v = parseFloat(el.value);
   if (el.value.trim() === '' || !Number.isFinite(v)) { updateFreqs(); return; }
-  if (el.dataset.kind === 'left') setFreqs(v, rightHz);
-  else if (el.dataset.kind === 'right') setFreqs(leftHz, v);
-  else setFreqs(leftHz, leftHz + clamp(v, 0, FREQ_MAX - leftHz));
+  if (el.dataset.kind === 'left') setFreqsManual(v, rightHz);
+  else if (el.dataset.kind === 'right') setFreqsManual(leftHz, v);
+  else setBeat(v);
+}
+
+// L を固定し、R 側の向き（L より上か下か）を保ったままビート幅を変える。L・R とも範囲内にクランプ
+function setBeat(v) {
+  const up = rightHz >= leftHz;
+  const beat = clamp(v, 0, up ? FREQ_MAX - leftHz : leftHz - FREQ_MIN);
+  setFreqsManual(leftHz, up ? leftHz + beat : leftHz - beat);
 }
 
 document.querySelectorAll('.num-input').forEach((el) => {
@@ -614,19 +638,14 @@ function updateFreqs() {
   document.getElementById('left-val').value = l;
   document.getElementById('right-val').value = r;
   document.getElementById('beat-val').value = beat;
-  document.getElementById('beat-val').max = round2(FREQ_MAX - l);
+  document.getElementById('beat-val').max = round2(r >= l ? FREQ_MAX - l : l - FREQ_MIN);
   document.getElementById('disp-left').textContent = l;
   document.getElementById('disp-right').textContent = r;
   document.getElementById('disp-beat').textContent = beat;
 
   // 波形タイプ判定
   const badge = document.getElementById('wave-badge');
-  let label, color;
-  if (beat < 4) { label = 'DELTA'; color = '#6080ff'; }
-  else if (beat < 8) { label = 'THETA'; color = '#00d4ff'; }
-  else if (beat < 14) { label = 'ALPHA'; color = '#00ff9d'; }
-  else if (beat < 30) { label = 'BETA'; color = '#ffcc00'; }
-  else { label = 'GAMMA'; color = '#ff6060'; }
+  const { label, color } = getBand(beat);
   badge.textContent = label;
   badge.style.color = color;
   badge.style.borderColor = color;
@@ -644,10 +663,38 @@ function updateVolume() {
   if (gainNode) gainNode.gain.setTargetAtTime(vol * 0.4, audioCtx.currentTime, 0.05);
 }
 
+// プリセット。帯域のギリシャ文字は getBand() から生成する
+const PRESETS = [
+  { l: 200, r: 202, desc: '深い睡眠' },
+  { l: 250, r: 254, desc: '瞑想・直感' },
+  { l: 250, r: 256, desc: '深リラックス' },
+  { l: 200, r: 210, desc: '集中・フロー' },
+  { l: 250, r: 268, desc: '集中・思考' },
+  { l: 300, r: 340, desc: '高度な集中・認知' },
+];
+
+function renderPresets() {
+  const wrap = document.getElementById('presets');
+  PRESETS.forEach((p) => {
+    const beat = round2(Math.abs(p.r - p.l));
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn';
+    const strong = document.createElement('strong');
+    strong.textContent = getBand(beat).greek + ' ' + beat + 'Hz';
+    btn.append(strong, p.desc);
+    btn.addEventListener('click', () => applyPreset(p.l, p.r, btn));
+    if (p.l === leftHz && p.r === rightHz) btn.classList.add('active');
+    wrap.appendChild(btn);
+  });
+}
+
+function setActivePreset(btn) {
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.toggle('active', b === btn));
+}
+
 function applyPreset(l, r, btn) {
   setFreqs(l, r);
-  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+  setActivePreset(btn);
 }
 
 function togglePlay() {
@@ -838,6 +885,7 @@ function drawWave() {
 }
 
 // 初期化
+renderPresets();
 updateFreqs();
 
 // PWA: Service Worker 登録
